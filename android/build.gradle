@@ -1,0 +1,96 @@
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = "../build"
+
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+/**
+ * Fix for AGP 8+: some older plugins (e.g. qr_code_scanner) don't define namespace.
+ * This assigns a namespace automatically if it's missing.
+ *
+ * Works without afterEvaluate (avoids: "Cannot run Project.afterEvaluate when already evaluated")
+ */
+subprojects { project ->
+
+    def applyNamespaceIfMissing = { ->
+        try {
+            if (project.hasProperty("android") && project.android != null) {
+
+                def currentNs = null
+                try { currentNs = project.android.namespace } catch (ignored) { }
+
+                if (currentNs == null || currentNs.toString().trim().isEmpty()) {
+                    def fallback = project.group?.toString()
+                    if (fallback == null || fallback.trim().isEmpty() || fallback == "unspecified") {
+                        fallback = "com.example.${project.name}"
+                    }
+                    project.android.namespace = fallback
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    project.plugins.withId("com.android.library") {
+        applyNamespaceIfMissing()
+    }
+
+    project.plugins.withId("com.android.application") {
+        applyNamespaceIfMissing()
+    }
+
+    /**
+     * ✅ Force Java/Kotlin targets consistently:
+     * - App + most plugins: Java 17 / Kotlin 17
+     * - qr_code_scanner only: Java 1.8 / Kotlin 1.8 (because it is built for Java 8)
+     */
+    project.plugins.withId("com.android.library") {
+        project.android {
+            compileOptions {
+                if (project.name == "qr_code_scanner") {
+                    sourceCompatibility JavaVersion.VERSION_1_8
+                    targetCompatibility JavaVersion.VERSION_1_8
+                } else {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
+            }
+        }
+    }
+
+    project.plugins.withId("com.android.application") {
+        project.android {
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+        }
+    }
+
+    // Kotlin targets: 17 for all, except qr_code_scanner => 1.8
+    project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+            if (project.name == "qr_code_scanner") {
+                jvmTarget = "1.8"
+            } else {
+                jvmTarget = "17"
+            }
+        }
+    }
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
