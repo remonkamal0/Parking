@@ -7,6 +7,8 @@ import 'package:new_parking/data/all_parking_response.dart';
 import '../../app/route_api.dart';
 import '../../local_storage.dart';
 import '../details/parking_details_screen.dart';
+import '../../services/sunmi_printer_service.dart';
+import '../../services/printer_debug_service.dart';
 
 class CreateParkingScreen extends StatefulWidget {
   const CreateParkingScreen({super.key});
@@ -31,6 +33,15 @@ class _CreateParkingScreenState extends State<CreateParkingScreen> {
   int _parkingType = 0;
 
   ParkingModel? parkingModel;
+
+  // Constants for parking types
+  static const int VALET_PARKING = 0;
+  static const int VIP_PARKING = 1;
+  static const int PER_HOUR_PARKING = 2;
+  static const int FINE_PARKING = 3;
+
+  // Hourly rate for per hour parking
+  static const double HOURLY_RATE = 25.0;
 
   @override
   void dispose() {
@@ -394,8 +405,14 @@ class _CreateParkingScreenState extends State<CreateParkingScreen> {
       setState(() {});
       debugPrint('Response : ${jsonResponse["message"]}.');
       if (parkingModel != null) {
-        _startPrint(
-            parkingModel?.printText ?? '', parkingModel?.code.toString());
+        // Check if it's per hour parking and print receipt
+        if (_parkingType == PER_HOUR_PARKING) {
+          await _printPerHourParkingReceipt();
+        } else {
+          // Use existing print method for other parking types
+          _startPrint(parkingModel?.printText ?? '', parkingModel?.code.toString());
+        }
+        
         debugPrint(jsonResponse.toString());
         Navigator.push(
           context,
@@ -410,6 +427,99 @@ class _CreateParkingScreenState extends State<CreateParkingScreen> {
     } else {
       debugPrint('Request failed with status: ${response.body}.');
     }
+  }
+
+  Future<void> _printPerHourParkingReceipt() async {
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const AlertDialog(
+          content: Row(
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 20),
+              Text('Printing receipt...'),
+            ],
+          ),
+        ),
+      );
+
+      // First try direct print test
+      print('Testing direct print...');
+      try {
+        await SunmiPrinterService.testDirectPrint();
+        print('Direct print test successful');
+      } catch (e) {
+        print('Direct print test failed: $e');
+      }
+      
+      // Wait a moment for tests to complete
+      await Future.delayed(const Duration(seconds: 1));
+
+      // Check printer status (but allow printing even if check fails)
+      bool printerReady = await SunmiPrinterService.checkPrinterStatus();
+      print('Printer status check result: $printerReady');
+      
+      // Always try to print regardless of status check
+      print('Attempting to print receipt...');
+
+      // Print the receipt
+      await SunmiPrinterService.printPerHourParkingReceipt(
+        parkingCode: parkingModel?.code.toString() ?? '',
+        carNumber: _clientCarNumber.text.isNotEmpty ? _clientCarNumber.text : 'N/A',
+        entryTime: DateTime.now(),
+        hourlyRate: HOURLY_RATE,
+      );
+
+      Navigator.pop(context); // Close loading dialog
+      _showSuccessDialog('Receipt printed successfully!');
+      
+    } catch (e) {
+      Navigator.pop(context); // Close loading dialog
+      print('Print error details: $e');
+      
+      // Show more helpful error message
+      String errorMessage = e.toString();
+      if (errorMessage.contains('All printing methods failed')) {
+        _showErrorDialog('Printer not responding. Please check:\n\n1. Device is Sunmi V2S\n2. Printer has paper\n3. Printer is powered on\n4. Try restarting the device\n\nIf problem persists, contact support.');
+      } else {
+        _showErrorDialog('Print attempt failed: ${errorMessage}\n\nThe app tried multiple printing methods.\nPlease ensure:\n1. This is a Sunmi V2S device\n2. Printer is powered on\n3. Paper is loaded');
+      }
+    }
+  }
+
+  void _showSuccessDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Success'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Error'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _startPrint(String text, String? parkingId) async {

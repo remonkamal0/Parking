@@ -1,6 +1,6 @@
 plugins {
     id "com.android.application"
-    id "kotlin-android"
+    id "org.jetbrains.kotlin.android"
     id "dev.flutter.flutter-gradle-plugin"
 }
 
@@ -8,18 +8,6 @@ android {
     namespace = "com.example.parking"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
-
-    // ✅ ADD THIS
-    buildFeatures {
-        aidl true
-    }
-
-    // ✅ ADD THIS
-    sourceSets {
-        main {
-            aidl.srcDirs = ['src/main/aidl']
-        }
-    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -41,8 +29,15 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
         }
     }
+}
+
+dependencies {
+    // ✅ Sunmi Official Printer SDK
+    implementation "com.sunmi:printerlibrary:1.0.23"
 }
 
 flutter {

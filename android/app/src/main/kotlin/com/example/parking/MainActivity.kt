@@ -1,59 +1,86 @@
 package com.example.parking
 
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.ServiceConnection
 import android.os.Bundle
-import android.os.IBinder
 import android.util.Log
+import android.widget.Toast
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import woyou.aidlservice.jiuiv5.IWoyouService
+
+// ✅ Sunmi Official Printer Library (printerlibrary)
+import com.sunmi.peripheral.printer.InnerPrinterCallback
+import com.sunmi.peripheral.printer.InnerPrinterManager
+import com.sunmi.peripheral.printer.SunmiPrinterService
 
 class MainActivity : FlutterActivity() {
 
-    private val CHANNEL = "com.example.parking/print"
-    private var woyouService: IWoyouService? = null
-    private var isBound = false
+    private val CHANNEL = "com.example.new_parking/print"
+    private val TAG = "SUNMI_SDK"
 
-    private val conn = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            woyouService = IWoyouService.Stub.asInterface(service)
-            isBound = true
-            Log.d("SUNMI", "Printer service connected")
+    private var sunmiService: SunmiPrinterService? = null
+    private var isConnected = false
+
+    private val innerPrinterCallback = object : InnerPrinterCallback() {
+        override fun onConnected(service: SunmiPrinterService?) {
+            sunmiService = service
+            isConnected = (service != null)
+            Log.e(TAG, "✅ Sunmi printer connected = $isConnected")
+            Toast.makeText(this@MainActivity, "✅ Printer Connected", Toast.LENGTH_SHORT).show()
+
+            // Auto test print
+            try {
+                printText("=== SUNMI SDK TEST ===\nConnected OK\n\n")
+            } catch (e: Exception) {
+                Log.e(TAG, "Auto test print failed: ${e.message}")
+            }
         }
 
-        override fun onServiceDisconnected(name: ComponentName?) {
-            woyouService = null
-            isBound = false
-            Log.d("SUNMI", "Printer service disconnected")
+        override fun onDisconnected() {
+            sunmiService = null
+            isConnected = false
+            Log.e(TAG, "❌ Sunmi printer disconnected")
+            Toast.makeText(this@MainActivity, "❌ Printer Disconnected", Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        bindSunmiService()
+
+        // ✅ bind via Official SDK
+        try {
+            InnerPrinterManager.getInstance().bindService(this, innerPrinterCallback)
+            Log.e(TAG, "bindService called (SDK)")
+        } catch (e: Exception) {
+            Log.e(TAG, "bindService (SDK) error: ${e.message}")
+            Toast.makeText(this, "❌ SDK bind error: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isBound) {
-            unbindService(conn)
-            isBound = false
-        }
+        try {
+            InnerPrinterManager.getInstance().unBindService(this, innerPrinterCallback)
+        } catch (_: Exception) {}
+        sunmiService = null
+        isConnected = false
     }
 
-    private fun bindSunmiService() {
-        try {
-            val intent = Intent()
-            intent.setPackage("woyou.aidlservice.jiuiv5")
-            intent.action = "woyou.aidlservice.jiuiv5.IWoyouService"
-            val ok = bindService(intent, conn, Context.BIND_AUTO_CREATE)
-            Log.d("SUNMI", "bindService: $ok")
+    private fun printText(text: String): Boolean {
+        val svc = sunmiService ?: return false
+        return try {
+            // init
+            try { svc.printerInit(null) } catch (_: Exception) {}
+
+            // optional: align left (0), center (1), right (2)
+            try { svc.setAlignment(0, null) } catch (_: Exception) {}
+
+            svc.printText(text, null)
+            try { svc.lineWrap(3, null) } catch (_: Exception) {}
+
+            true
         } catch (e: Exception) {
-            Log.e("SUNMI", "bindSunmiService error: ${e.message}")
+            Log.e(TAG, "printText error: ${e.message}")
+            false
         }
     }
 
@@ -63,33 +90,33 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+
                     "startPrint" -> {
                         val args = call.arguments as? Map<*, *>
                         val text = (args?.get("print_text") as? String) ?: ""
 
-                        printText(text) { success, err ->
-                            if (success) result.success(true) else result.error("PRINT_FAIL", err ?: "Unknown", null)
+                        if (!isConnected || sunmiService == null) {
+                            Toast.makeText(this, "❌ Printer not connected", Toast.LENGTH_SHORT).show()
+                            result.error("NOT_CONNECTED", "Printer not connected", null)
+                            return@setMethodCallHandler
+                        }
+
+                        val ok = printText(text + "\n")
+                        if (ok) {
+                            Toast.makeText(this, "✅ Printed", Toast.LENGTH_SHORT).show()
+                            result.success(true)
+                        } else {
+                            Toast.makeText(this, "❌ Print failed", Toast.LENGTH_SHORT).show()
+                            result.error("PRINT_FAIL", "Print failed", null)
                         }
                     }
+
+                    "checkPrinterStatus" -> {
+                        result.success(isConnected && sunmiService != null)
+                    }
+
                     else -> result.notImplemented()
                 }
             }
-    }
-
-    private fun printText(text: String, done: (Boolean, String?) -> Unit) {
-        val svc = woyouService
-        if (svc == null) {
-            done(false, "SUNMI printer service not connected")
-            return
-        }
-
-        try {
-            svc.printerInit(null)
-            svc.printText(text + "\n", null)
-            svc.lineWrap(3, null)
-            done(true, null)
-        } catch (e: Exception) {
-            done(false, e.message)
-        }
     }
 }
